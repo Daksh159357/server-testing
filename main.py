@@ -1,35 +1,83 @@
-from fastapi import FastAPI, Request
-from supabase import create_client, Client
 import os
+import json
+import base64
+import requests
+from fastapi import FastAPI, Request, HTTPException
 
 app = FastAPI()
 
-# ✅ Your Supabase credentials
-SUPABASE_URL = "https://xoevpqxmwajmbcbwiodp.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvZXZwcXhtd2FqbWJjYndpb2RwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1Mzg1NTMsImV4cCI6MjA3MTExNDU1M30.szA38zDn5lcwLyjRarNO8FF-JEGcP2fElEsjML8Ynjs"
+# GitHub repo settings — fill in your details
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+if not GITHUB_TOKEN:
+    raise RuntimeError("GITHUB_TOKEN environment variable is required")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+GITHUB_REPO = "Daksh159357/server-testing"   # your repo
+FILE_PATH   = "data.json"
+BRANCH      = "main"                          # or your branch
 
-# ✅ Root route
+API_URL_BASE = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{FILE_PATH}"
+
 @app.get("/")
 def home():
-    return {"message": "✅ Supabase + Render API is running!"}
+    return {"message": "✅ GitHub JSON Database API running!"}
 
-# ✅ Get all rows from a table
-@app.get("/data/{table}")
-def get_data(table: str):
-    data = supabase.table(table).select("*").execute()
-    return {"data": data.data}
+@app.get("/data")
+def get_data():
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{FILE_PATH}"
+    resp = requests.get(url)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code,
+                            detail=f"Failed to fetch file: {resp.text}")
+    try:
+        data = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"JSON parse error: {e}")
+    return {"data": data}
 
-# ✅ Add data (POST JSON)
-@app.post("/add/{table}")
-async def add_data(table: str, request: Request):
-    body = await request.json()
-    result = supabase.table(table).insert(body).execute()
-    return {"status": "ok", "inserted": result.data}
+@app.post("/add")
+async def add_data(request: Request):
+    new_entry = await request.json()
 
-# ✅ Delete rows by filter (example)
-@app.delete("/delete/{table}/{id}")
-def delete_data(table: str, id: int):
-    result = supabase.table(table).delete().eq("id", id).execute()
-    return {"status": "deleted", "id": id}
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    params = {"ref": BRANCH}
+
+    # 1️⃣ Get current file metadata (including SHA)
+    resp = requests.get(API_URL_BASE, headers=headers, params=params)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code,
+                            detail=f"Could not fetch file metadata: {resp.text}")
+    file_info = resp.json()
+    sha = file_info.get("sha")
+    if sha is None:
+        raise HTTPException(status_code=500, detail="No SHA found in repo file metadata")
+
+    encoded_content = file_info.get("content", "")
+    try:
+        content_bytes = base64.b64decode(encoded_content)
+        current_data = json.loads(content_bytes.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to decode JSON content: {e}")
+
+    # Append the new entry
+    current_data.append(new_entry)
+
+    # 2️⃣ Prepare new content
+    new_content_bytes = json.dumps(current_data, indent=2).encode("utf-8")
+    new_content_b64   = base64.b64encode(new_content_bytes).decode("utf-8")
+
+    body = {
+        "message": f"Update {FILE_PATH} via API",
+        "content": new_content_b64,
+        "sha": sha,
+        "branch": BRANCH
+    }
+
+    update_resp = requests.put(API_URL_BASE, headers=headers, json=body)
+    if update_resp.status_code not in (200, 201):
+        raise HTTPException(status_code=update_resp.status_code,
+                            detail=f"Failed to update file: {update_resp.text}")
+
+    return {"status": "saved", "entry": new_entry}
