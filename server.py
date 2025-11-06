@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, HTTPException
 
 app = FastAPI()
 
-# GitHub repo settings — fill in your details
+# — GitHub repo settings — fill in your details
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 if not GITHUB_TOKEN:
     raise RuntimeError("GITHUB_TOKEN environment variable is required")
@@ -26,8 +26,7 @@ def get_data():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{FILE_PATH}"
     resp = requests.get(url)
     if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code,
-                            detail=f"Failed to fetch file: {resp.text}")
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch file: {resp.text}")
     try:
         data = resp.json()
     except Exception as e:
@@ -40,15 +39,14 @@ async def add_data(request: Request):
 
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json",
+        "Accept":        "application/vnd.github+json",
     }
     params = {"ref": BRANCH}
 
     # 1️⃣ Get current file metadata (including SHA)
     resp = requests.get(API_URL_BASE, headers=headers, params=params)
     if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code,
-                            detail=f"Could not fetch file metadata: {resp.text}")
+        raise HTTPException(status_code=resp.status_code, detail=f"Could not fetch file metadata: {resp.text}")
     file_info = resp.json()
     sha = file_info.get("sha")
     if sha is None:
@@ -71,8 +69,8 @@ async def add_data(request: Request):
     body = {
         "message": f"Update {FILE_PATH} via API",
         "content": new_content_b64,
-        "sha": sha,
-        "branch": BRANCH
+        "sha":     sha,
+        "branch":  BRANCH
     }
 
     update_resp = requests.put(API_URL_BASE, headers=headers, json=body)
@@ -81,3 +79,10 @@ async def add_data(request: Request):
                             detail=f"Failed to update file: {update_resp.text}")
 
     return {"status": "saved", "entry": new_entry}
+
+# This block ensures the app keeps running when you execute the script
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("server:app", host="0.0.0.0",
+                port=int(os.environ.get("PORT", 8000)),
+                log_level="info")
